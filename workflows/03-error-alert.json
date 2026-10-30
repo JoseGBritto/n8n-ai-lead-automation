@@ -1,0 +1,62 @@
+{
+  "name": "Lead automation — error alert",
+  "nodes": [
+    {
+      "id": "node-0038-4a1b-9c2d-000000000038",
+      "name": "When a workflow fails",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "node-0040-4a1b-9c2d-000000000040",
+      "name": "Notify team (Slack)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#sales"
+        },
+        "text": "={{ '⚠️ Workflow *' + $json.workflow.name + '* failed at node *' + $json.execution.lastNodeExecuted + '*: ' + $json.execution.error.message + '\\n' + ($json.execution.url || '') }}",
+        "otherOptions": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "cred-0039-4a1b-9",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When a workflow fails": {
+      "main": [
+        [
+          {
+            "node": "Notify team (Slack)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "id": "LeadErrorAlert01",
+  "tags": []
+}

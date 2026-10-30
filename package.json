@@ -1,0 +1,11 @@
+{
+  "name": "n8n-ai-lead-automation",
+  "version": "1.0.0",
+  "private": true,
+  "description": "n8n workflows that capture, qualify with AI, store, answer and follow up inbound leads.",
+  "scripts": {
+    "build": "node scripts/build-workflows.js",
+    "test": "node scripts/build-workflows.js && node --test tests/lead-logic.test.js tests/workflows.test.js"
+  },
+  "license": "MIT"
+}

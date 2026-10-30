@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contact form → n8n</title>
+<style>
+  :root { --brand:#4F46E5; --ink:#111827; --muted:#6B7280; --line:#E5E7EB; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:#F5F5F7; color:var(--ink); }
+  main { max-width:520px; margin:48px auto; background:#fff; border-radius:16px; padding:32px; box-shadow:0 10px 30px rgba(0,0,0,.06); }
+  h1 { margin:0 0 6px; font-size:24px; } p.lead { margin:0 0 24px; color:var(--muted); }
+  label { display:block; font-size:13px; font-weight:600; margin:14px 0 6px; }
+  input, textarea { width:100%; border:1px solid var(--line); border-radius:10px; padding:11px 12px; font:inherit; }
+  input:focus, textarea:focus { outline:2px solid var(--brand); border-color:transparent; }
+  textarea { min-height:120px; resize:vertical; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:0 12px; }
+  .hp { position:absolute; left:-9999px; }
+  button { margin-top:20px; width:100%; border:0; border-radius:10px; padding:13px; font-weight:600; font-size:15px; color:#fff; background:var(--brand); cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  .msg { margin-top:16px; padding:12px; border-radius:10px; font-size:14px; display:none; }
+  .ok { display:block; background:#ECFDF5; color:#065F46; } .err { display:block; background:#FEF2F2; color:#991B1B; }
+  @media (max-width:520px) { main { margin:16px; padding:22px; } .row { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tell us about your project</h1>
+  <p class="lead">We reply within minutes, even on weekends.</p>
+  <form id="lead">
+    <div class="row">
+      <div><label for="name">Name</label><input id="name" name="name" required maxlength="80" autocomplete="name"></div>
+      <div><label for="company">Company</label><input id="company" name="company" maxlength="120" autocomplete="organization"></div>
+    </div>
+    <div class="row">
+      <div><label for="email">Email</label><input id="email" name="email" type="email" required autocomplete="email"></div>
+      <div><label for="phone">Phone / WhatsApp</label><input id="phone" name="phone" maxlength="30" autocomplete="tel"></div>
+    </div>
+    <label for="message">What do you need?</label>
+    <textarea id="message" name="message" required minlength="10" maxlength="2000"
+      placeholder="Goal, deadline and approximate budget help us answer faster."></textarea>
+    <input class="hp" name="website_url_hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <button type="submit">Send</button>
+    <div id="msg" class="msg" role="status"></div>
+  </form>
+</main>
+<script>
+  // Paste the Production URL of the "New lead (webhook)" node here:
+  const WEBHOOK_URL = 'https://YOUR-N8N-DOMAIN/webhook/new-lead';
+
+  const form = document.getElementById('lead'), msg = document.getElementById('msg');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const button = form.querySelector('button');
+    const data = Object.fromEntries(new FormData(form));
+    data.source = new URLSearchParams(location.search).get('utm_source') || 'website';
+    button.disabled = true; msg.className = 'msg';
+    try {
+      const res = await fetch(WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body.ok === false) throw new Error((body.errors || ['Please check the form.']).join(', '));
+      msg.textContent = body.message || 'Thanks! We will reply shortly.'; msg.className = 'msg ok'; form.reset();
+    } catch (err) {
+      msg.textContent = 'Could not send: ' + err.message; msg.className = 'msg err';
+    } finally { button.disabled = false; }
+  });
+</script>
+</body>
+</html>

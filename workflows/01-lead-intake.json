@@ -1,0 +1,502 @@
+{
+  "name": "Lead intake — AI qualification, CRM, instant reply and sales alert",
+  "nodes": [
+    {
+      "id": "node-0001-4a1b-9c2d-000000000001",
+      "name": "New lead (webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-lead",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "webhookId": "b3f6c1de-2a41-4c8e-9f57-new-lead0001"
+    },
+    {
+      "id": "node-0007-4a1b-9c2d-000000000007",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-0002-4a1b-9c2d-000000000002",
+              "name": "business_offer",
+              "value": "a web development and automation studio that builds websites, online stores and internal tools",
+              "type": "string"
+            },
+            {
+              "id": "set-0003-4a1b-9c2d-000000000003",
+              "name": "ai_base_url",
+              "value": "https://api.openai.com/v1",
+              "type": "string"
+            },
+            {
+              "id": "set-0004-4a1b-9c2d-000000000004",
+              "name": "ai_model",
+              "value": "gpt-4o-mini",
+              "type": "string"
+            },
+            {
+              "id": "set-0005-4a1b-9c2d-000000000005",
+              "name": "crm_sheet_url",
+              "value": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit",
+              "type": "string"
+            },
+            {
+              "id": "set-0006-4a1b-9c2d-000000000006",
+              "name": "sales_channel",
+              "value": "#sales",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0008-4a1b-9c2d-000000000008",
+      "name": "Validate & normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Generated from src/lead-logic.js by scripts/build-workflows.js — edit there, then run `npm run build`.\n/**\n * Business logic used inside the n8n Code nodes.\n * scripts/build-workflows.js inlines these functions into the workflow JSON,\n * so the exact code that runs in n8n is the code covered by tests/lead-logic.test.js.\n */\n\nconst FREE_EMAIL_DOMAINS = ['gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com', 'icloud.com', 'live.com', 'proton.me', 'protonmail.com'];\nconst URGENT_WORDS = ['urgent', 'asap', 'this week', 'today', 'urgente', 'cuanto antes', 'esta semana', 'hoy'];\nconst BUDGET_RE = /(?:usd|us\\$|\\$|u\\$s|eur|€)\\s?(\\d[\\d.,]*)\\s?(k)?|(\\d[\\d.,]*)\\s?(k)?\\s?(?:usd|dollars|dólares|dolares)/i;\nconst TIERS = [[70, 'hot'], [40, 'warm'], [0, 'cold']];\n\nfunction clean(value, max) {\n  return String(value == null ? '' : value).replace(/\\s+/g, ' ').trim().slice(0, max);\n}\n\n/** Accepts the raw webhook body (form, Typeform, Webflow, Tally...) and returns a normalized lead or an error. */\nfunction normalizeLead(raw, now) {\n  const body = raw && raw.body ? raw.body : (raw || {});\n  const pick = (...keys) => keys.map((k) => body[k]).find((v) => v != null && String(v).trim() !== '');\n  const lead = {\n    name: clean(pick('name', 'full_name', 'nombre'), 80),\n    email: clean(pick('email', 'mail', 'correo'), 120).toLowerCase(),\n    phone: clean(pick('phone', 'telefono', 'whatsapp'), 30).replace(/[^\\d+]/g, ''),\n    company: clean(pick('company', 'empresa', 'business'), 120),\n    website: clean(pick('website', 'web', 'sitio'), 200),\n    message: clean(pick('message', 'mensaje', 'details', 'comments'), 2000),\n    source: clean(pick('source', 'utm_source'), 60) || 'website',\n  };\n  const errors = [];\n  if (!lead.name) errors.push('name is required');\n  if (!/^[^@\\s]+@[^@\\s]+\\.[a-z]{2,}$/i.test(lead.email)) errors.push('a valid email is required');\n  if (lead.message.length < 10) errors.push('message is too short');\n  if (body.website_url_hp) errors.push('spam'); // honeypot field hidden in the form\n  lead.id = 'L' + (now || new Date()).toISOString().replace(/\\D/g, '').slice(0, 14) + '-' + lead.email.split('@')[0].slice(0, 6);\n  lead.created_at = (now || new Date()).toISOString();\n  lead.email_domain = lead.email.split('@')[1] || '';\n  return { lead, valid: errors.length === 0, errors };\n}\n\n/** Builds the OpenAI-compatible request body for the qualification step. */\nfunction buildAiRequest(lead, model, offer) {\n  return {\n    model: model || 'gpt-4o-mini',\n    temperature: 0.2,\n    response_format: { type: 'json_object' },\n    messages: [\n      { role: 'system', content:\n        'You qualify inbound sales leads for this business: ' + (offer || 'a digital services agency') + '.\\n' +\n        'Return ONLY a JSON object with keys: fit_score (0-100 integer), intent (\"buy_now\"|\"exploring\"|\"support\"|\"spam\"|\"job_seeker\"|\"other\"), ' +\n        'budget_usd (number or null), urgency (\"high\"|\"medium\"|\"low\"), service (short text), summary (max 25 words), ' +\n        'reply (a warm, specific first reply of 60-110 words in the lead\\'s language, signed \"— The team\", no placeholders, no prices).' },\n      { role: 'user', content: JSON.stringify({ name: lead.name, company: lead.company, website: lead.website, email_domain: lead.email_domain, message: lead.message }) },\n    ],\n  };\n}\n\n/** Deterministic score used when the AI is unavailable, and as a sanity check. */\nfunction ruleScore(lead) {\n  const text = (lead.message || '').toLowerCase();\n  let score = 20;\n  const reasons = [];\n  if (lead.email_domain && !FREE_EMAIL_DOMAINS.includes(lead.email_domain)) { score += 20; reasons.push('company email'); }\n  if (lead.company) { score += 10; reasons.push('company given'); }\n  if (lead.phone) { score += 10; reasons.push('phone given'); }\n  if (text.length > 120) { score += 10; reasons.push('detailed message'); }\n  const budget = parseBudget(text);\n  if (budget >= 1000) { score += 20; reasons.push('budget >= 1k'); } else if (budget > 0) { score += 10; reasons.push('budget stated'); }\n  if (URGENT_WORDS.some((w) => text.includes(w))) { score += 10; reasons.push('urgent'); }\n  return { score: Math.min(score, 100), budget, reasons };\n}\n\nfunction parseBudget(text) {\n  const m = String(text || '').match(BUDGET_RE);\n  if (!m) return 0;\n  const digits = (m[1] || m[3]).replace(/[.,](?=\\d{3}\\b)/g, '').replace(',', '.');\n  return Math.round(parseFloat(digits) * ((m[2] || m[4]) ? 1000 : 1)) || 0;\n}\n\nfunction tierFor(score) {\n  return TIERS.find(([min]) => score >= min)[1];\n}\n\n/** Merges the AI answer (or its failure) with the rule score into one CRM row. */\nfunction qualify(lead, aiResponse) {\n  const rules = ruleScore(lead);\n  let ai = null;\n  try {\n    const content = aiResponse && aiResponse.choices && aiResponse.choices[0].message.content;\n    ai = content ? JSON.parse(content) : null;\n  } catch (e) { ai = null; }\n\n  const aiScore = ai && Number.isFinite(Number(ai.fit_score)) ? Math.max(0, Math.min(100, Math.round(Number(ai.fit_score)))) : null;\n  // AI decides, but the rules can pull an obviously strong lead up (and spam always goes to 0)\n  let score = aiScore == null ? rules.score : Math.round(aiScore * 0.75 + rules.score * 0.25);\n  if (ai && (ai.intent === 'spam' || ai.intent === 'job_seeker')) score = Math.min(score, 10);\n\n  const tier = tierFor(score);\n  const firstName = lead.name.split(' ')[0];\n  const fallbackReply = /[áéíóúñ¿¡]|hola|necesito|quiero/i.test(lead.message)\n    ? `Hola ${firstName}, ¡gracias por escribirnos! Recibimos tu consulta y una persona del equipo te va a responder en menos de 24 horas hábiles con los próximos pasos.\\n\\n— El equipo`\n    : `Hi ${firstName}, thanks for reaching out! We received your message and a member of our team will get back to you within one business day with next steps.\\n\\n— The team`;\n\n  return {\n    id: lead.id,\n    created_at: lead.created_at,\n    name: lead.name,\n    email: lead.email,\n    phone: lead.phone,\n    company: lead.company,\n    website: lead.website,\n    source: lead.source,\n    message: lead.message,\n    score,\n    tier,\n    intent: (ai && ai.intent) || 'unknown',\n    budget_usd: (ai && Number(ai.budget_usd)) || rules.budget || '',\n    urgency: (ai && ai.urgency) || (rules.reasons.includes('urgent') ? 'high' : 'low'),\n    service: (ai && ai.service) || '',\n    summary: (ai && ai.summary) || lead.message.slice(0, 140),\n    reply: (ai && typeof ai.reply === 'string' && ai.reply.length > 40) ? ai.reply : fallbackReply,\n    qualified_by: ai ? 'ai+rules' : 'rules',\n    status: tier === 'cold' && ai && ai.intent === 'spam' ? 'spam' : 'new',\n    followups: 0,\n    last_contact: '',\n  };\n}\n\n/** Text for the sales alert (Slack mrkdwn). */\nfunction alertText(row) {\n  const icon = { hot: '🔥', warm: '🌤️', cold: '🧊' }[row.tier];\n  return `${icon} *${row.tier.toUpperCase()} lead* (${row.score}/100): *${row.name}*${row.company ? ' — ' + row.company : ''}\\n` +\n    `${row.summary}\\n` +\n    `Budget: ${row.budget_usd ? 'USD ' + row.budget_usd : 'n/a'} · Urgency: ${row.urgency} · Intent: ${row.intent}\\n` +\n    `✉️ ${row.email}${row.phone ? ' · 📞 ' + row.phone : ''}`;\n}\n\n/** Picks CRM rows that need a follow-up email today. */\nfunction dueFollowUps(rows, now, opts) {\n  const o = Object.assign({ afterHours: 48, maxFollowups: 2 }, opts);\n  const nowMs = (now || new Date()).getTime();\n  return rows.filter((r) => {\n    if (r.status !== 'new' || !r.email || r.tier === 'cold') return false;\n    const count = Number(r.followups || 0);\n    if (count >= o.maxFollowups) return false;\n    const last = new Date(r.last_contact || r.created_at).getTime();\n    return Number.isFinite(last) && nowMs - last >= o.afterHours * 3600 * 1000;\n  }).map((r) => Object.assign({}, r, {\n    followups: Number(r.followups || 0) + 1,\n    last_contact: new Date(nowMs).toISOString(),\n    followup_subject: Number(r.followups || 0) === 0 ? 'Quick follow-up on your request' : 'Should I close your request?',\n    followup_body: Number(r.followups || 0) === 0\n      ? `Hi ${String(r.name).split(' ')[0]},\\n\\nJust checking you saw our reply about \"${r.service || 'your project'}\". Would a 15-minute call this week help? Reply with a time that suits you.\\n\\n— The team`\n      : `Hi ${String(r.name).split(' ')[0]},\\n\\nI haven't heard back, so I'll close your request for now. If the timing is better later, just reply to this email and we'll pick it up.\\n\\n— The team`,\n  }));\n}\n\n// ---- node logic ----\nconst out = [];\nfor (const item of $input.all()) {\n  const cfg = item.json;\n  const { lead, valid, errors } = normalizeLead(cfg);\n  out.push({ json: { lead, valid, errors, ai_request: buildAiRequest(lead, cfg.ai_model, cfg.business_offer) } });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "node-0010-4a1b-9c2d-000000000010",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-0009-4a1b-9c2d-000000000009",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0012-4a1b-9c2d-000000000012",
+      "name": "AI qualification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.ai_base_url }}/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.ai_request) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cred-0011-4a1b-9",
+          "name": "AI provider (Authorization: Bearer)"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2
+    },
+    {
+      "id": "node-0013-4a1b-9c2d-000000000013",
+      "name": "Score & build CRM row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Generated from src/lead-logic.js by scripts/build-workflows.js — edit there, then run `npm run build`.\n/**\n * Business logic used inside the n8n Code nodes.\n * scripts/build-workflows.js inlines these functions into the workflow JSON,\n * so the exact code that runs in n8n is the code covered by tests/lead-logic.test.js.\n */\n\nconst FREE_EMAIL_DOMAINS = ['gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com', 'icloud.com', 'live.com', 'proton.me', 'protonmail.com'];\nconst URGENT_WORDS = ['urgent', 'asap', 'this week', 'today', 'urgente', 'cuanto antes', 'esta semana', 'hoy'];\nconst BUDGET_RE = /(?:usd|us\\$|\\$|u\\$s|eur|€)\\s?(\\d[\\d.,]*)\\s?(k)?|(\\d[\\d.,]*)\\s?(k)?\\s?(?:usd|dollars|dólares|dolares)/i;\nconst TIERS = [[70, 'hot'], [40, 'warm'], [0, 'cold']];\n\nfunction clean(value, max) {\n  return String(value == null ? '' : value).replace(/\\s+/g, ' ').trim().slice(0, max);\n}\n\n/** Accepts the raw webhook body (form, Typeform, Webflow, Tally...) and returns a normalized lead or an error. */\nfunction normalizeLead(raw, now) {\n  const body = raw && raw.body ? raw.body : (raw || {});\n  const pick = (...keys) => keys.map((k) => body[k]).find((v) => v != null && String(v).trim() !== '');\n  const lead = {\n    name: clean(pick('name', 'full_name', 'nombre'), 80),\n    email: clean(pick('email', 'mail', 'correo'), 120).toLowerCase(),\n    phone: clean(pick('phone', 'telefono', 'whatsapp'), 30).replace(/[^\\d+]/g, ''),\n    company: clean(pick('company', 'empresa', 'business'), 120),\n    website: clean(pick('website', 'web', 'sitio'), 200),\n    message: clean(pick('message', 'mensaje', 'details', 'comments'), 2000),\n    source: clean(pick('source', 'utm_source'), 60) || 'website',\n  };\n  const errors = [];\n  if (!lead.name) errors.push('name is required');\n  if (!/^[^@\\s]+@[^@\\s]+\\.[a-z]{2,}$/i.test(lead.email)) errors.push('a valid email is required');\n  if (lead.message.length < 10) errors.push('message is too short');\n  if (body.website_url_hp) errors.push('spam'); // honeypot field hidden in the form\n  lead.id = 'L' + (now || new Date()).toISOString().replace(/\\D/g, '').slice(0, 14) + '-' + lead.email.split('@')[0].slice(0, 6);\n  lead.created_at = (now || new Date()).toISOString();\n  lead.email_domain = lead.email.split('@')[1] || '';\n  return { lead, valid: errors.length === 0, errors };\n}\n\n/** Builds the OpenAI-compatible request body for the qualification step. */\nfunction buildAiRequest(lead, model, offer) {\n  return {\n    model: model || 'gpt-4o-mini',\n    temperature: 0.2,\n    response_format: { type: 'json_object' },\n    messages: [\n      { role: 'system', content:\n        'You qualify inbound sales leads for this business: ' + (offer || 'a digital services agency') + '.\\n' +\n        'Return ONLY a JSON object with keys: fit_score (0-100 integer), intent (\"buy_now\"|\"exploring\"|\"support\"|\"spam\"|\"job_seeker\"|\"other\"), ' +\n        'budget_usd (number or null), urgency (\"high\"|\"medium\"|\"low\"), service (short text), summary (max 25 words), ' +\n        'reply (a warm, specific first reply of 60-110 words in the lead\\'s language, signed \"— The team\", no placeholders, no prices).' },\n      { role: 'user', content: JSON.stringify({ name: lead.name, company: lead.company, website: lead.website, email_domain: lead.email_domain, message: lead.message }) },\n    ],\n  };\n}\n\n/** Deterministic score used when the AI is unavailable, and as a sanity check. */\nfunction ruleScore(lead) {\n  const text = (lead.message || '').toLowerCase();\n  let score = 20;\n  const reasons = [];\n  if (lead.email_domain && !FREE_EMAIL_DOMAINS.includes(lead.email_domain)) { score += 20; reasons.push('company email'); }\n  if (lead.company) { score += 10; reasons.push('company given'); }\n  if (lead.phone) { score += 10; reasons.push('phone given'); }\n  if (text.length > 120) { score += 10; reasons.push('detailed message'); }\n  const budget = parseBudget(text);\n  if (budget >= 1000) { score += 20; reasons.push('budget >= 1k'); } else if (budget > 0) { score += 10; reasons.push('budget stated'); }\n  if (URGENT_WORDS.some((w) => text.includes(w))) { score += 10; reasons.push('urgent'); }\n  return { score: Math.min(score, 100), budget, reasons };\n}\n\nfunction parseBudget(text) {\n  const m = String(text || '').match(BUDGET_RE);\n  if (!m) return 0;\n  const digits = (m[1] || m[3]).replace(/[.,](?=\\d{3}\\b)/g, '').replace(',', '.');\n  return Math.round(parseFloat(digits) * ((m[2] || m[4]) ? 1000 : 1)) || 0;\n}\n\nfunction tierFor(score) {\n  return TIERS.find(([min]) => score >= min)[1];\n}\n\n/** Merges the AI answer (or its failure) with the rule score into one CRM row. */\nfunction qualify(lead, aiResponse) {\n  const rules = ruleScore(lead);\n  let ai = null;\n  try {\n    const content = aiResponse && aiResponse.choices && aiResponse.choices[0].message.content;\n    ai = content ? JSON.parse(content) : null;\n  } catch (e) { ai = null; }\n\n  const aiScore = ai && Number.isFinite(Number(ai.fit_score)) ? Math.max(0, Math.min(100, Math.round(Number(ai.fit_score)))) : null;\n  // AI decides, but the rules can pull an obviously strong lead up (and spam always goes to 0)\n  let score = aiScore == null ? rules.score : Math.round(aiScore * 0.75 + rules.score * 0.25);\n  if (ai && (ai.intent === 'spam' || ai.intent === 'job_seeker')) score = Math.min(score, 10);\n\n  const tier = tierFor(score);\n  const firstName = lead.name.split(' ')[0];\n  const fallbackReply = /[áéíóúñ¿¡]|hola|necesito|quiero/i.test(lead.message)\n    ? `Hola ${firstName}, ¡gracias por escribirnos! Recibimos tu consulta y una persona del equipo te va a responder en menos de 24 horas hábiles con los próximos pasos.\\n\\n— El equipo`\n    : `Hi ${firstName}, thanks for reaching out! We received your message and a member of our team will get back to you within one business day with next steps.\\n\\n— The team`;\n\n  return {\n    id: lead.id,\n    created_at: lead.created_at,\n    name: lead.name,\n    email: lead.email,\n    phone: lead.phone,\n    company: lead.company,\n    website: lead.website,\n    source: lead.source,\n    message: lead.message,\n    score,\n    tier,\n    intent: (ai && ai.intent) || 'unknown',\n    budget_usd: (ai && Number(ai.budget_usd)) || rules.budget || '',\n    urgency: (ai && ai.urgency) || (rules.reasons.includes('urgent') ? 'high' : 'low'),\n    service: (ai && ai.service) || '',\n    summary: (ai && ai.summary) || lead.message.slice(0, 140),\n    reply: (ai && typeof ai.reply === 'string' && ai.reply.length > 40) ? ai.reply : fallbackReply,\n    qualified_by: ai ? 'ai+rules' : 'rules',\n    status: tier === 'cold' && ai && ai.intent === 'spam' ? 'spam' : 'new',\n    followups: 0,\n    last_contact: '',\n  };\n}\n\n/** Text for the sales alert (Slack mrkdwn). */\nfunction alertText(row) {\n  const icon = { hot: '🔥', warm: '🌤️', cold: '🧊' }[row.tier];\n  return `${icon} *${row.tier.toUpperCase()} lead* (${row.score}/100): *${row.name}*${row.company ? ' — ' + row.company : ''}\\n` +\n    `${row.summary}\\n` +\n    `Budget: ${row.budget_usd ? 'USD ' + row.budget_usd : 'n/a'} · Urgency: ${row.urgency} · Intent: ${row.intent}\\n` +\n    `✉️ ${row.email}${row.phone ? ' · 📞 ' + row.phone : ''}`;\n}\n\n/** Picks CRM rows that need a follow-up email today. */\nfunction dueFollowUps(rows, now, opts) {\n  const o = Object.assign({ afterHours: 48, maxFollowups: 2 }, opts);\n  const nowMs = (now || new Date()).getTime();\n  return rows.filter((r) => {\n    if (r.status !== 'new' || !r.email || r.tier === 'cold') return false;\n    const count = Number(r.followups || 0);\n    if (count >= o.maxFollowups) return false;\n    const last = new Date(r.last_contact || r.created_at).getTime();\n    return Number.isFinite(last) && nowMs - last >= o.afterHours * 3600 * 1000;\n  }).map((r) => Object.assign({}, r, {\n    followups: Number(r.followups || 0) + 1,\n    last_contact: new Date(nowMs).toISOString(),\n    followup_subject: Number(r.followups || 0) === 0 ? 'Quick follow-up on your request' : 'Should I close your request?',\n    followup_body: Number(r.followups || 0) === 0\n      ? `Hi ${String(r.name).split(' ')[0]},\\n\\nJust checking you saw our reply about \"${r.service || 'your project'}\". Would a 15-minute call this week help? Reply with a time that suits you.\\n\\n— The team`\n      : `Hi ${String(r.name).split(' ')[0]},\\n\\nI haven't heard back, so I'll close your request for now. If the timing is better later, just reply to this email and we'll pick it up.\\n\\n— The team`,\n  }));\n}\n\n// ---- node logic ----\n// The AI response replaced the item, so recover the lead that produced it.\nreturn $input.all().map((item, i) => {\n  const lead = $('Validate & normalize').itemMatching(i).json.lead;\n  return { json: qualify(lead, item.json) };\n});\n"
+      }
+    },
+    {
+      "id": "node-0015-4a1b-9c2d-000000000015",
+      "name": "Save to CRM (Google Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1340,
+        200
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $('Settings').first().json.crm_sheet_url }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "cred-0014-4a1b-9",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "node-0016-4a1b-9c2d-000000000016",
+      "name": "Respond: thanks",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1580,
+        40
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"ok\": true, \"message\": \"Thanks! We received your request and will reply shortly.\" } }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "node-0018-4a1b-9c2d-000000000018",
+      "name": "Not spam?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1580,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-0017-4a1b-9c2d-000000000017",
+              "leftValue": "={{ $('Score & build CRM row').item.json.status }}",
+              "rightValue": "spam",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0020-4a1b-9c2d-000000000020",
+      "name": "Instant reply (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1800,
+        200
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Score & build CRM row').item.json.email }}",
+        "subject": "={{ 'Re: your request' + ($('Score & build CRM row').item.json.service ? ' — ' + $('Score & build CRM row').item.json.service : '') }}",
+        "emailType": "text",
+        "message": "={{ $('Score & build CRM row').item.json.reply }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "cred-0019-4a1b-9",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "node-0022-4a1b-9c2d-000000000022",
+      "name": "Hot or warm?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1580,
+        380
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-0021-4a1b-9c2d-000000000021",
+              "leftValue": "={{ $('Score & build CRM row').item.json.tier }}",
+              "rightValue": "cold",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0023-4a1b-9c2d-000000000023",
+      "name": "Format alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        380
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Generated from src/lead-logic.js by scripts/build-workflows.js — edit there, then run `npm run build`.\n/**\n * Business logic used inside the n8n Code nodes.\n * scripts/build-workflows.js inlines these functions into the workflow JSON,\n * so the exact code that runs in n8n is the code covered by tests/lead-logic.test.js.\n */\n\nconst FREE_EMAIL_DOMAINS = ['gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com', 'icloud.com', 'live.com', 'proton.me', 'protonmail.com'];\nconst URGENT_WORDS = ['urgent', 'asap', 'this week', 'today', 'urgente', 'cuanto antes', 'esta semana', 'hoy'];\nconst BUDGET_RE = /(?:usd|us\\$|\\$|u\\$s|eur|€)\\s?(\\d[\\d.,]*)\\s?(k)?|(\\d[\\d.,]*)\\s?(k)?\\s?(?:usd|dollars|dólares|dolares)/i;\nconst TIERS = [[70, 'hot'], [40, 'warm'], [0, 'cold']];\n\nfunction clean(value, max) {\n  return String(value == null ? '' : value).replace(/\\s+/g, ' ').trim().slice(0, max);\n}\n\n/** Accepts the raw webhook body (form, Typeform, Webflow, Tally...) and returns a normalized lead or an error. */\nfunction normalizeLead(raw, now) {\n  const body = raw && raw.body ? raw.body : (raw || {});\n  const pick = (...keys) => keys.map((k) => body[k]).find((v) => v != null && String(v).trim() !== '');\n  const lead = {\n    name: clean(pick('name', 'full_name', 'nombre'), 80),\n    email: clean(pick('email', 'mail', 'correo'), 120).toLowerCase(),\n    phone: clean(pick('phone', 'telefono', 'whatsapp'), 30).replace(/[^\\d+]/g, ''),\n    company: clean(pick('company', 'empresa', 'business'), 120),\n    website: clean(pick('website', 'web', 'sitio'), 200),\n    message: clean(pick('message', 'mensaje', 'details', 'comments'), 2000),\n    source: clean(pick('source', 'utm_source'), 60) || 'website',\n  };\n  const errors = [];\n  if (!lead.name) errors.push('name is required');\n  if (!/^[^@\\s]+@[^@\\s]+\\.[a-z]{2,}$/i.test(lead.email)) errors.push('a valid email is required');\n  if (lead.message.length < 10) errors.push('message is too short');\n  if (body.website_url_hp) errors.push('spam'); // honeypot field hidden in the form\n  lead.id = 'L' + (now || new Date()).toISOString().replace(/\\D/g, '').slice(0, 14) + '-' + lead.email.split('@')[0].slice(0, 6);\n  lead.created_at = (now || new Date()).toISOString();\n  lead.email_domain = lead.email.split('@')[1] || '';\n  return { lead, valid: errors.length === 0, errors };\n}\n\n/** Builds the OpenAI-compatible request body for the qualification step. */\nfunction buildAiRequest(lead, model, offer) {\n  return {\n    model: model || 'gpt-4o-mini',\n    temperature: 0.2,\n    response_format: { type: 'json_object' },\n    messages: [\n      { role: 'system', content:\n        'You qualify inbound sales leads for this business: ' + (offer || 'a digital services agency') + '.\\n' +\n        'Return ONLY a JSON object with keys: fit_score (0-100 integer), intent (\"buy_now\"|\"exploring\"|\"support\"|\"spam\"|\"job_seeker\"|\"other\"), ' +\n        'budget_usd (number or null), urgency (\"high\"|\"medium\"|\"low\"), service (short text), summary (max 25 words), ' +\n        'reply (a warm, specific first reply of 60-110 words in the lead\\'s language, signed \"— The team\", no placeholders, no prices).' },\n      { role: 'user', content: JSON.stringify({ name: lead.name, company: lead.company, website: lead.website, email_domain: lead.email_domain, message: lead.message }) },\n    ],\n  };\n}\n\n/** Deterministic score used when the AI is unavailable, and as a sanity check. */\nfunction ruleScore(lead) {\n  const text = (lead.message || '').toLowerCase();\n  let score = 20;\n  const reasons = [];\n  if (lead.email_domain && !FREE_EMAIL_DOMAINS.includes(lead.email_domain)) { score += 20; reasons.push('company email'); }\n  if (lead.company) { score += 10; reasons.push('company given'); }\n  if (lead.phone) { score += 10; reasons.push('phone given'); }\n  if (text.length > 120) { score += 10; reasons.push('detailed message'); }\n  const budget = parseBudget(text);\n  if (budget >= 1000) { score += 20; reasons.push('budget >= 1k'); } else if (budget > 0) { score += 10; reasons.push('budget stated'); }\n  if (URGENT_WORDS.some((w) => text.includes(w))) { score += 10; reasons.push('urgent'); }\n  return { score: Math.min(score, 100), budget, reasons };\n}\n\nfunction parseBudget(text) {\n  const m = String(text || '').match(BUDGET_RE);\n  if (!m) return 0;\n  const digits = (m[1] || m[3]).replace(/[.,](?=\\d{3}\\b)/g, '').replace(',', '.');\n  return Math.round(parseFloat(digits) * ((m[2] || m[4]) ? 1000 : 1)) || 0;\n}\n\nfunction tierFor(score) {\n  return TIERS.find(([min]) => score >= min)[1];\n}\n\n/** Merges the AI answer (or its failure) with the rule score into one CRM row. */\nfunction qualify(lead, aiResponse) {\n  const rules = ruleScore(lead);\n  let ai = null;\n  try {\n    const content = aiResponse && aiResponse.choices && aiResponse.choices[0].message.content;\n    ai = content ? JSON.parse(content) : null;\n  } catch (e) { ai = null; }\n\n  const aiScore = ai && Number.isFinite(Number(ai.fit_score)) ? Math.max(0, Math.min(100, Math.round(Number(ai.fit_score)))) : null;\n  // AI decides, but the rules can pull an obviously strong lead up (and spam always goes to 0)\n  let score = aiScore == null ? rules.score : Math.round(aiScore * 0.75 + rules.score * 0.25);\n  if (ai && (ai.intent === 'spam' || ai.intent === 'job_seeker')) score = Math.min(score, 10);\n\n  const tier = tierFor(score);\n  const firstName = lead.name.split(' ')[0];\n  const fallbackReply = /[áéíóúñ¿¡]|hola|necesito|quiero/i.test(lead.message)\n    ? `Hola ${firstName}, ¡gracias por escribirnos! Recibimos tu consulta y una persona del equipo te va a responder en menos de 24 horas hábiles con los próximos pasos.\\n\\n— El equipo`\n    : `Hi ${firstName}, thanks for reaching out! We received your message and a member of our team will get back to you within one business day with next steps.\\n\\n— The team`;\n\n  return {\n    id: lead.id,\n    created_at: lead.created_at,\n    name: lead.name,\n    email: lead.email,\n    phone: lead.phone,\n    company: lead.company,\n    website: lead.website,\n    source: lead.source,\n    message: lead.message,\n    score,\n    tier,\n    intent: (ai && ai.intent) || 'unknown',\n    budget_usd: (ai && Number(ai.budget_usd)) || rules.budget || '',\n    urgency: (ai && ai.urgency) || (rules.reasons.includes('urgent') ? 'high' : 'low'),\n    service: (ai && ai.service) || '',\n    summary: (ai && ai.summary) || lead.message.slice(0, 140),\n    reply: (ai && typeof ai.reply === 'string' && ai.reply.length > 40) ? ai.reply : fallbackReply,\n    qualified_by: ai ? 'ai+rules' : 'rules',\n    status: tier === 'cold' && ai && ai.intent === 'spam' ? 'spam' : 'new',\n    followups: 0,\n    last_contact: '',\n  };\n}\n\n/** Text for the sales alert (Slack mrkdwn). */\nfunction alertText(row) {\n  const icon = { hot: '🔥', warm: '🌤️', cold: '🧊' }[row.tier];\n  return `${icon} *${row.tier.toUpperCase()} lead* (${row.score}/100): *${row.name}*${row.company ? ' — ' + row.company : ''}\\n` +\n    `${row.summary}\\n` +\n    `Budget: ${row.budget_usd ? 'USD ' + row.budget_usd : 'n/a'} · Urgency: ${row.urgency} · Intent: ${row.intent}\\n` +\n    `✉️ ${row.email}${row.phone ? ' · 📞 ' + row.phone : ''}`;\n}\n\n/** Picks CRM rows that need a follow-up email today. */\nfunction dueFollowUps(rows, now, opts) {\n  const o = Object.assign({ afterHours: 48, maxFollowups: 2 }, opts);\n  const nowMs = (now || new Date()).getTime();\n  return rows.filter((r) => {\n    if (r.status !== 'new' || !r.email || r.tier === 'cold') return false;\n    const count = Number(r.followups || 0);\n    if (count >= o.maxFollowups) return false;\n    const last = new Date(r.last_contact || r.created_at).getTime();\n    return Number.isFinite(last) && nowMs - last >= o.afterHours * 3600 * 1000;\n  }).map((r) => Object.assign({}, r, {\n    followups: Number(r.followups || 0) + 1,\n    last_contact: new Date(nowMs).toISOString(),\n    followup_subject: Number(r.followups || 0) === 0 ? 'Quick follow-up on your request' : 'Should I close your request?',\n    followup_body: Number(r.followups || 0) === 0\n      ? `Hi ${String(r.name).split(' ')[0]},\\n\\nJust checking you saw our reply about \"${r.service || 'your project'}\". Would a 15-minute call this week help? Reply with a time that suits you.\\n\\n— The team`\n      : `Hi ${String(r.name).split(' ')[0]},\\n\\nI haven't heard back, so I'll close your request for now. If the timing is better later, just reply to this email and we'll pick it up.\\n\\n— The team`,\n  }));\n}\n\n// ---- node logic ----\nreturn $input.all().map((item, i) => {\n  const row = $('Score & build CRM row').itemMatching(i).json;\n  return { json: { text: alertText(row) } };\n});\n"
+      }
+    },
+    {
+      "id": "node-0025-4a1b-9c2d-000000000025",
+      "name": "Alert sales (Slack)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        2020,
+        380
+      ],
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Settings').first().json.sales_channel }}"
+        },
+        "text": "={{ $json.text }}",
+        "otherOptions": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "cred-0024-4a1b-9",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "node-0026-4a1b-9c2d-000000000026",
+      "name": "Respond: invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        420
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"ok\": false, \"errors\": $json.errors } }}",
+        "options": {
+          "responseCode": 422
+        }
+      }
+    }
+  ],
+  "connections": {
+    "New lead (webhook)": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Validate & normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & normalize": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "AI qualification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI qualification": {
+      "main": [
+        [
+          {
+            "node": "Score & build CRM row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score & build CRM row": {
+      "main": [
+        [
+          {
+            "node": "Save to CRM (Google Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to CRM (Google Sheets)": {
+      "main": [
+        [
+          {
+            "node": "Respond: thanks",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Not spam?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Hot or warm?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not spam?": {
+      "main": [
+        [
+          {
+            "node": "Instant reply (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hot or warm?": {
+      "main": [
+        [
+          {
+            "node": "Format alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format alert": {
+      "main": [
+        [
+          {
+            "node": "Alert sales (Slack)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "LeadErrorAlert01"
+  },
+  "pinData": {},
+  "active": false,
+  "id": "LeadIntake000001",
+  "tags": []
+}
