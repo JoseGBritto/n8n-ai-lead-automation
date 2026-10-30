@@ -28,7 +28,7 @@
           "mode": "name",
           "value": "#sales"
         },
-        "text": "={{ '⚠️ Workflow *' + $json.workflow.name + '* failed at node *' + $json.execution.lastNodeExecuted + '*: ' + $json.execution.error.message + '\\n' + ($json.execution.url || '') }}",
+        "text": "={{ $json.execution ? '⚠️ Workflow *' + $json.workflow.name + '* failed at node *' + $json.execution.lastNodeExecuted + '*: ' + $json.execution.error.message + '\\n' + ($json.execution.url || '') : '⚠️ Workflow *' + $json.workflow.name + '* could not start: ' + $json.trigger.error.message }}",
         "otherOptions": {}
       },
       "credentials": {

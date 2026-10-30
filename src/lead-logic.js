@@ -31,7 +31,9 @@ function normalizeLead(raw, now) {
   if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(lead.email)) errors.push('a valid email is required');
   if (lead.message.length < 10) errors.push('message is too short');
   if (body.website_url_hp) errors.push('spam'); // honeypot field hidden in the form
-  lead.id = 'L' + (now || new Date()).toISOString().replace(/\D/g, '').slice(0, 14) + '-' + lead.email.split('@')[0].slice(0, 6);
+  // timestamp + email prefix + random suffix: readable and unique even for two leads in the same second
+  lead.id = 'L' + (now || new Date()).toISOString().replace(/\D/g, '').slice(0, 14) + '-' + lead.email.split('@')[0].slice(0, 6)
+    + '-' + Math.random().toString(36).slice(2, 6);
   lead.created_at = (now || new Date()).toISOString();
   lead.email_domain = lead.email.split('@')[1] || '';
   return { lead, valid: errors.length === 0, errors };

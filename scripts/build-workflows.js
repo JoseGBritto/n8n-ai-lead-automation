@@ -199,7 +199,8 @@ const followUp = {
     ['Pick due follow-ups', 'Send follow-up (Gmail)'], ['Send follow-up (Gmail)', 'Prepare CRM update'],
     ['Prepare CRM update', 'Update CRM row'],
   ]),
-  settings: { executionOrder: 'v1', errorWorkflow: 'LeadErrorAlert01' },
+  // the 9:00 schedule uses this time zone (change it for clients elsewhere)
+  settings: { executionOrder: 'v1', errorWorkflow: 'LeadErrorAlert01', timezone: 'America/Argentina/Buenos_Aires' },
   pinData: {}, active: false, id: 'LeadFollowUp0001', tags: [],
 };
 
@@ -213,7 +214,8 @@ const errorAlert = {
     node('Notify team (Slack)', 'n8n-nodes-base.slack', 2.2, [240, 300], {
       select: 'channel',
       channelId: { __rl: true, mode: 'name', value: '#sales' },
-      text: "={{ '⚠️ Workflow *' + $json.workflow.name + '* failed at node *' + $json.execution.lastNodeExecuted + '*: ' + $json.execution.error.message + '\\n' + ($json.execution.url || '') }}",
+      // failures in a trigger arrive under "trigger" instead of "execution"
+      text: "={{ $json.execution ? '⚠️ Workflow *' + $json.workflow.name + '* failed at node *' + $json.execution.lastNodeExecuted + '*: ' + $json.execution.error.message + '\\n' + ($json.execution.url || '') : '⚠️ Workflow *' + $json.workflow.name + '* could not start: ' + $json.trigger.error.message }}",
       otherOptions: {},
     }, { credentials: cred('slackApi', 'Slack account') }),
   ],

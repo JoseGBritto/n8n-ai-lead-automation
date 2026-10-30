@@ -3,7 +3,7 @@
 Three importable **n8n** workflows that turn a website form into a small sales machine:
 
 1. **Lead intake** — a form posts to a webhook; the lead is validated, **scored by AI**, saved to a **Google Sheets CRM**, answered with a **personalised email within a minute**, and hot/warm leads trigger a **Slack alert** for the sales team.
-2. **Follow-ups** — every weekday at 9:00, leads that haven't replied get up to two polite follow-up emails, and the CRM is updated.
+2. **Follow-ups** — every weekday at 9:00, open leads (status `new`, not cold) get up to two polite follow-up emails, 48 hours apart, and the CRM is updated. When a lead answers or you close it, change its `status` in the sheet (for example to `contacted`, `won` or `lost`) and the follow-ups stop.
 3. **Error alert** — if anything fails, the team is told in Slack with a link to the failed execution.
 
 ![Lead intake workflow](docs/lead-intake.png)
@@ -15,7 +15,7 @@ Three importable **n8n** workflows that turn a website form into a small sales m
 - Every lead gets a relevant answer within a minute, 24/7, instead of waiting for someone to check the inbox.
 - Salespeople only get pinged for leads worth their time, with a one-line AI summary, budget and urgency.
 - Every lead ends up in one sheet with a score, tier and status, ready for reports, with no copy and paste.
-- Nobody forgets to follow up.
+- Nobody forgets to follow up: open leads get reminders until someone updates their status.
 
 ## What happens to each lead
 
@@ -33,7 +33,7 @@ Three importable **n8n** workflows that turn a website form into a small sales m
 ## Tested
 
 - `npm test` runs 19 tests: the business logic, plus **the exact JavaScript stored in each Code node** of the generated workflows, plus structural checks (every connection points to an existing node, unique names and ids, error workflow wired).
-- The three workflows were **imported into n8n 2.45.7** and the intake workflow was **executed end to end** against a mock AI server, with the Google Sheets, Gmail and Slack nodes swapped for no-op nodes (those need real accounts): the valid lead came out as a hot lead with its reply and Slack text, and the invalid one took the `422` branch. The same run with the AI server down fell back to the rules score as designed.
+- The three workflows were **imported into n8n 2.45.7** and the intake workflow was **executed end to end** against a mock AI server, with the Google Sheets, Gmail and Slack nodes swapped for no-op nodes (those need real accounts): the valid lead came out as a hot lead with its reply and Slack text, and the invalid one took the `422` branch. The same run with the AI server down fell back to the rules score as designed, and the error-alert message was checked for both kinds of failure (a failing node and a trigger that cannot start).
 - GitHub Actions runs the tests and fails if `workflows/` is out of date with `src/`.
 
 ## Set up (about 20 minutes)
@@ -41,7 +41,7 @@ Three importable **n8n** workflows that turn a website form into a small sales m
 1. **Google Sheet:** create a sheet with a tab named `Leads` and paste the header row from [`docs/crm-template.csv`](docs/crm-template.csv).
 2. **Import:** in n8n → *Workflows → Import from file* → import `workflows/03-error-alert.json`, then `01-lead-intake.json` and `02-lead-follow-ups.json`.
 3. **Credentials:** connect Google Sheets, Gmail and Slack, and create a *Header Auth* credential for the AI provider: name `Authorization`, value `Bearer YOUR_API_KEY`. Select them in the nodes that show a warning.
-4. **Settings node** (first node of each workflow): describe the business offer, AI base URL and model (`https://api.openai.com/v1` + `gpt-4o-mini`, or Groq, OpenRouter, Gemini's OpenAI endpoint, a local Ollama…), the sheet URL and the Slack channel.
+4. **Settings node** (first node of each workflow): describe the business offer, AI base URL and model (`https://api.openai.com/v1` + `gpt-4o-mini`, or Groq, OpenRouter, Gemini's OpenAI endpoint, a local Ollama…), the sheet URL and the Slack channel. The follow-up schedule runs in the time zone set in that workflow's settings (Buenos Aires by default).
 5. **Activate** the three workflows, copy the webhook's *Production URL* into `form/index.html` (`WEBHOOK_URL`) and publish the form, or point any existing form to that URL.
 
 ## Customising for a client

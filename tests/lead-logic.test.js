@@ -17,7 +17,8 @@ test('normalizeLead cleans fields and validates', () => {
   assert.equal(lead.email, 'maria@acmelogistics.com');
   assert.equal(lead.phone, '+5492995551234');
   assert.equal(lead.email_domain, 'acmelogistics.com');
-  assert.match(lead.id, /^L20261102120000-maria$/);
+  assert.match(lead.id, /^L20261102120000-maria-[a-z0-9]{1,4}$/);
+  assert.notEqual(lead.id, L.normalizeLead(good, NOW).lead.id, 'ids are unique even in the same second');
 });
 
 test('normalizeLead accepts Spanish field names and flat bodies', () => {
