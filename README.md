@@ -2,8 +2,8 @@
 
 Three importable **n8n** workflows that turn a website form into a small sales machine:
 
-1. **Lead intake** — a form posts to a webhook; the lead is validated, **scored by AI**, saved to a **Google Sheets CRM**, answered with a **personalised email within a minute**, and hot/warm leads trigger a **Slack alert** for the sales team.
-2. **Follow-ups** — every weekday at 9:00, open leads (status `new`, not cold) get up to two polite follow-up emails, 48 hours apart, and the CRM is updated. When a lead answers or you close it, change its `status` in the sheet (for example to `contacted`, `won` or `lost`) and the follow-ups stop.
+1. **Lead intake** — a form posts to a webhook; the lead is validated, **scored by AI**, saved to a **Google Sheets CRM**, answered with a **personalized email within a minute**, and hot/warm leads trigger a **Slack alert** for the sales team.
+2. **Follow-ups** — every weekday at 9:00, open leads (status `new`, not cold) get up to two polite follow-up emails in their own language (English or Spanish), 48 hours apart, and the CRM is updated. When a lead answers or you close it, change its `status` in the sheet (for example to `contacted`, `won` or `lost`) and the follow-ups stop.
 3. **Error alert** — if anything fails, the team is told in Slack with a link to the failed execution.
 
 ![Lead intake workflow](docs/lead-intake.png)
@@ -21,18 +21,18 @@ Three importable **n8n** workflows that turn a website form into a small sales m
 
 | Step | Node | Detail |
 |---|---|---|
-| Capture | Webhook `POST /webhook/new-lead` | Works with the included form, Webflow, WordPress, Typeform, Tally (English or Spanish field names). Honeypot field against bots. |
-| Validate | Code | Cleans name, email, phone, message; invalid requests get a `422` with the reasons. |
+| Capture | Webhook `POST /webhook/new-lead` | Understands the included form, Tally, Typeform and Webflow payloads, and any form that posts JSON fields with English or Spanish labels. A hidden honeypot field filters bots: they get the normal "thanks" response and nothing else happens. |
+| Validate | Code | Cleans name, email, phone, message and detects the language; invalid requests get a `422` with the reasons. |
+| Respond | Respond to Webhook | The form shows "Thanks!" right after validation, before the AI and the CRM steps run. |
 | Qualify | HTTP Request → any OpenAI-compatible API | Returns `fit_score`, intent, budget, urgency, service, summary and a reply draft as strict JSON. The email address is never sent to the AI. |
-| Score | Code | Final score = 75% AI + 25% transparent rules (company email, budget, phone, urgency…). **If the AI is down, the rules score alone keeps everything running.** Spam and job seekers are capped at 10. |
-| Store | Google Sheets (append) | One row per lead: score, tier (hot ≥ 70, warm ≥ 40, cold), status, follow-up counters. |
-| Respond | Respond to Webhook | The form shows "Thanks!" immediately. |
+| Score | Code | Final score = 75% AI + 25% transparent rules (company email, a budget stated in US dollars, phone, urgency that isn't negated…). **If the AI is down, the rules score alone keeps everything running.** Spam and job seekers are capped at 10. |
+| Store | Google Sheets (append) | One row per lead: score, tier (hot ≥ 70, warm ≥ 40, cold), language, status, follow-up counters. Values are written raw, so form text can't become a spreadsheet formula. |
 | Reply | Gmail | Personal reply in the lead's language (AI draft, or a safe template as fallback). Not sent to spam. |
 | Alert | Slack | `🔥 HOT lead (86/100): Lucía Fernández — Bodega Andes` + summary, budget, urgency and contact. |
 
 ## Tested
 
-- `npm test` runs 19 tests: the business logic, plus **the exact JavaScript stored in each Code node** of the generated workflows, plus structural checks (every connection points to an existing node, unique names and ids, error workflow wired).
+- `npm test` runs 24 tests: the business logic, plus **the exact JavaScript stored in each Code node** of the generated workflows, plus structural checks (every connection points to an existing node, unique names and ids, error workflow wired, the visitor is answered before the slow steps).
 - The three workflows were **imported into n8n 2.45.7** and the intake workflow was **executed end to end** against a mock AI server, with the Google Sheets, Gmail and Slack nodes swapped for no-op nodes (those need real accounts): the valid lead came out as a hot lead with its reply and Slack text, and the invalid one took the `422` branch. The same run with the AI server down fell back to the rules score as designed, and the error-alert message was checked for both kinds of failure (a failing node and a trigger that cannot start).
 - GitHub Actions runs the tests and fails if `workflows/` is out of date with `src/`.
 
@@ -41,10 +41,11 @@ Three importable **n8n** workflows that turn a website form into a small sales m
 1. **Google Sheet:** create a sheet with a tab named `Leads` and paste the header row from [`docs/crm-template.csv`](docs/crm-template.csv).
 2. **Import:** in n8n → *Workflows → Import from file* → import `workflows/03-error-alert.json`, then `01-lead-intake.json` and `02-lead-follow-ups.json`.
 3. **Credentials:** connect Google Sheets, Gmail and Slack, and create a *Header Auth* credential for the AI provider: name `Authorization`, value `Bearer YOUR_API_KEY`. Select them in the nodes that show a warning.
-4. **Settings node** (first node of each workflow): describe the business offer, AI base URL and model (`https://api.openai.com/v1` + `gpt-4o-mini`, or Groq, OpenRouter, Gemini's OpenAI endpoint, a local Ollama…), the sheet URL and the Slack channel. The follow-up schedule runs in the time zone set in that workflow's settings (Buenos Aires by default).
-5. **Activate** the three workflows, copy the webhook's *Production URL* into `form/index.html` (`WEBHOOK_URL`) and publish the form, or point any existing form to that URL.
+4. **Settings node** (the first node after the trigger in each workflow): describe the business offer, AI base URL and model (`https://api.openai.com/v1` + `gpt-4o-mini`, or Groq, OpenRouter, Gemini's OpenAI endpoint, a local Ollama…), the sheet URL and the Slack channels. The follow-up schedule runs in the time zone set in that workflow's settings (Buenos Aires by default).
+5. **Error workflow:** n8n may give the imported error-alert workflow a new ID. Open the intake and follow-up workflows → *Settings* → *Error workflow* and select "Lead automation — error alert".
+6. **Activate** the three workflows, copy the webhook's *Production URL* into `form/index.html` (`WEBHOOK_URL`) and publish the form, or point any existing form to that URL.
 
-## Customising for a client
+## Customizing for a client
 
 The rules and texts live in [`src/lead-logic.js`](src/lead-logic.js) (score weights, tiers, free-email domains, urgency words, follow-up timing and wording). After editing, run:
 

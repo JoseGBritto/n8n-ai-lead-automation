@@ -28,14 +28,19 @@ test('normalizeLead accepts Spanish field names and flat bodies', () => {
 });
 
 test('normalizeLead rejects bad input and honeypot spam', () => {
-  const r = L.normalizeLead({ body: { name: '', email: 'nope', message: 'hi', website_url_hp: 'x' } }, NOW);
+  const r = L.normalizeLead({ body: { name: '', email: 'nope', message: 'hi' } }, NOW);
   assert.equal(r.valid, false);
-  assert.deepEqual(r.errors, ['name is required', 'a valid email is required', 'message is too short', 'spam']);
+  assert.deepEqual(r.errors, ['name is required', 'a valid email is required', 'message is too short']);
+  const bot = L.normalizeLead({ body: { ...good.body, website_url_hp: 'http://spam.example' } }, NOW);
+  assert.equal(bot.valid, false);
+  assert.equal(bot.bot, true);
+  assert.deepEqual(bot.errors, []); // nothing tells the bot it was caught
 });
 
 test('parseBudget understands common formats', () => {
   assert.equal(L.parseBudget('budget around USD 8,000'), 8000);
-  assert.equal(L.parseBudget('we have $2.5k'), 2500);
+  assert.equal(L.parseBudget('we have USD 2.5k'), 2500);
+  assert.equal(L.parseBudget('tenemos $500.000 pesos'), 0); // a bare $ may be pesos
   assert.equal(L.parseBudget('unos 1500 dólares'), 1500);
   assert.equal(L.parseBudget('u$s 700'), 700);
   assert.equal(L.parseBudget('no budget yet'), 0);
@@ -116,6 +121,54 @@ test('dueFollowUps picks only stale, open, non-cold leads and caps attempts', ()
   assert.deepEqual(due.map((r) => r.id), [1, 6]);
   assert.equal(due[0].followups, 1);
   assert.equal(due[0].followup_subject, 'Quick follow-up on your request');
-  assert.equal(due[1].followup_subject, 'Should I close your request?');
+  assert.equal(due[1].followup_subject, 'Should we close your request?');
+  assert.ok(due[1].followup_body.includes("We haven't heard back"));
   assert.equal(due[0].last_contact, NOW.toISOString());
+});
+
+
+test('Tally, Typeform and Webflow payloads are understood', () => {
+  const tally = { body: { eventType: 'FORM_RESPONSE', data: { fields: [
+    { key: 'question_1', label: 'Full name', type: 'INPUT_TEXT', value: 'Ana Ruiz' },
+    { key: 'question_2', label: 'Email', type: 'INPUT_EMAIL', value: 'ana@ruizstudio.com' },
+    { key: 'question_3', label: 'Company name', type: 'INPUT_TEXT', value: 'Ruiz Studio' },
+    { key: 'question_4', label: 'Tell us about your project', type: 'TEXTAREA', value: 'We need an online booking system for our studio.' },
+  ] } } };
+  const typeform = { body: { event_type: 'form_response', form_response: {
+    definition: { fields: [{ id: 'f1', title: 'What is your name?', type: 'short_text' }, { id: 'f2', title: 'Your email', type: 'email' },
+      { id: 'f3', title: 'Phone number', type: 'phone_number' }, { id: 'f4', title: 'What do you need?', type: 'long_text' }] },
+    answers: [{ type: 'text', text: 'Tom Baker', field: { id: 'f1', type: 'short_text' } },
+      { type: 'email', email: 'tom@bakerco.com', field: { id: 'f2', type: 'email' } },
+      { type: 'phone_number', phone_number: '+14155550100', field: { id: 'f3', type: 'phone_number' } },
+      { type: 'text', text: 'A chatbot that answers questions about our bakery orders.', field: { id: 'f4', type: 'long_text' } }],
+  } } };
+  const webflow = { body: { triggerType: 'form_submission', payload: { name: 'Contact', data: {
+    Name: 'Lucía Fernández', Email: 'lucia@bodegaandes.com.ar', Message: 'Necesitamos una tienda online para vender vinos.' } } } };
+  const a = L.normalizeLead(tally, NOW);
+  assert.equal(a.valid, true);
+  assert.equal(a.lead.name, 'Ana Ruiz');
+  assert.equal(a.lead.company, 'Ruiz Studio');
+  const b = L.normalizeLead(typeform, NOW);
+  assert.equal(b.valid, true);
+  assert.equal(b.lead.phone, '+14155550100');
+  assert.match(b.lead.message, /chatbot/);
+  const c = L.normalizeLead(webflow, NOW);
+  assert.equal(c.valid, true);
+  assert.equal(c.lead.lang, 'es');
+});
+
+test('urgency ignores negations and Spanish detection uses whole words', () => {
+  assert.equal(L.isUrgent('This is urgent, we launch today'), true);
+  assert.equal(L.isUrgent('Not urgent, just exploring'), false);
+  assert.equal(L.isUrgent('no es urgente'), false);
+  assert.equal(L.isSpanish('Hi, Nicholas here'), false);
+  assert.equal(L.isSpanish('Hola, necesito una web'), true);
+});
+
+test('follow-ups are written in the lead\'s language', () => {
+  const old = '2026-10-28T12:00:00Z';
+  const [es] = L.dueFollowUps([{ id: 'L9', name: 'Lucía Fernández', email: 'l@x.co', tier: 'hot', status: 'new', lang: 'es', followups: 0, created_at: old }], NOW);
+  assert.equal(es.followup_subject, 'Seguimiento de tu consulta');
+  assert.match(es.followup_body, /^Hola Lucía,/);
+  assert.match(es.followup_body, /— El equipo$/);
 });

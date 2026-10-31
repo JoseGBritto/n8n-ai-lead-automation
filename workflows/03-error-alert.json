@@ -2,7 +2,7 @@
   "name": "Lead automation — error alert",
   "nodes": [
     {
-      "id": "node-0038-4a1b-9c2d-000000000038",
+      "id": "node-0040-4a1b-9c2d-000000000040",
       "name": "When a workflow fails",
       "type": "n8n-nodes-base.errorTrigger",
       "typeVersion": 1,
@@ -13,12 +13,36 @@
       "parameters": {}
     },
     {
-      "id": "node-0040-4a1b-9c2d-000000000040",
+      "id": "node-0042-4a1b-9c2d-000000000042",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-0041-4a1b-9c2d-000000000041",
+              "name": "alert_channel",
+              "value": "#sales",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0044-4a1b-9c2d-000000000044",
       "name": "Notify team (Slack)",
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.2,
       "position": [
-        240,
+        440,
         300
       ],
       "parameters": {
@@ -26,14 +50,14 @@
         "channelId": {
           "__rl": true,
           "mode": "name",
-          "value": "#sales"
+          "value": "={{ $('Settings').first().json.alert_channel }}"
         },
         "text": "={{ $json.execution ? '⚠️ Workflow *' + $json.workflow.name + '* failed at node *' + $json.execution.lastNodeExecuted + '*: ' + $json.execution.error.message + '\\n' + ($json.execution.url || '') : '⚠️ Workflow *' + $json.workflow.name + '* could not start: ' + $json.trigger.error.message }}",
         "otherOptions": {}
       },
       "credentials": {
         "slackApi": {
-          "id": "cred-0039-4a1b-9",
+          "id": "cred-0043-4a1b-9",
           "name": "Slack account"
         }
       }
@@ -41,6 +65,17 @@
   ],
   "connections": {
     "When a workflow fails": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
       "main": [
         [
           {

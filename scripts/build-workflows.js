@@ -73,8 +73,8 @@ const intakeNodes = [
 const out = [];
 for (const item of $input.all()) {
   const cfg = item.json;
-  const { lead, valid, errors } = normalizeLead(cfg);
-  out.push({ json: { lead, valid, errors, ai_request: buildAiRequest(lead, cfg.ai_model, cfg.business_offer) } });
+  const { lead, valid, bot, errors } = normalizeLead(cfg);
+  out.push({ json: { lead, valid, bot, errors, ai_request: buildAiRequest(lead, cfg.ai_model, cfg.business_offer) } });
 }
 return out;`, [440, 300]),
   node('Valid?', 'n8n-nodes-base.if', 2.2, [660, 300], ifEquals('={{ $json.valid }}', true, 'true', 'boolean')),
@@ -97,9 +97,10 @@ return $input.all().map((item, i) => {
   node('Save to CRM (Google Sheets)', 'n8n-nodes-base.googleSheets', 4.5, [1340, 200], {
     operation: 'append', documentId: sheetsDoc, sheetName: sheetsTab,
     columns: { mappingMode: 'autoMapInputData', value: {}, matchingColumns: [], schema: [] },
-    options: {},
+    // RAW: text like "=SUM(...)" stays text and "+54 9..." phone numbers aren't turned into numbers
+    options: { cellFormat: 'RAW' },
   }, { credentials: cred('googleSheetsOAuth2Api', 'Google Sheets account') }),
-  node('Respond: thanks', 'n8n-nodes-base.respondToWebhook', 1.1, [1580, 40], {
+  node('Respond: thanks', 'n8n-nodes-base.respondToWebhook', 1.1, [900, 40], {
     respondWith: 'json',
     responseBody: '={{ { "ok": true, "message": "Thanks! We received your request and will reply shortly." } }}',
     options: { responseCode: 200 },
@@ -126,7 +127,8 @@ return $input.all().map((item, i) => {
     text: '={{ $json.text }}',
     otherOptions: {},
   }, { credentials: cred('slackApi', 'Slack account') }),
-  node('Respond: invalid', 'n8n-nodes-base.respondToWebhook', 1.1, [900, 420], {
+  node('Bot (honeypot)?', 'n8n-nodes-base.if', 2.2, [900, 440], ifEquals('={{ $json.bot }}', true, 'true', 'boolean')),
+  node('Respond: invalid', 'n8n-nodes-base.respondToWebhook', 1.1, [1120, 520], {
     respondWith: 'json',
     responseBody: '={{ { "ok": false, "errors": $json.errors } }}',
     options: { responseCode: 422 },
@@ -140,11 +142,13 @@ const intake = {
     ['New lead (webhook)', 'Settings'],
     ['Settings', 'Validate & normalize'],
     ['Validate & normalize', 'Valid?'],
+    ['Valid?', 'Respond: thanks', 0],      // the visitor gets "Thanks!" at once; the rest runs after
     ['Valid?', 'AI qualification', 0],
-    ['Valid?', 'Respond: invalid', 1],
+    ['Valid?', 'Bot (honeypot)?', 1],
+    ['Bot (honeypot)?', 'Respond: thanks', 0], // bots get the same 200 "thanks" and nothing else happens
+    ['Bot (honeypot)?', 'Respond: invalid', 1],
     ['AI qualification', 'Score & build CRM row'],
     ['Score & build CRM row', 'Save to CRM (Google Sheets)'],
-    ['Save to CRM (Google Sheets)', 'Respond: thanks'],
     ['Save to CRM (Google Sheets)', 'Not spam?'],
     ['Save to CRM (Google Sheets)', 'Hot or warm?'],
     ['Not spam?', 'Instant reply (Gmail)', 0],
@@ -211,15 +215,16 @@ const errorAlert = {
   name: 'Lead automation — error alert',
   nodes: [
     node('When a workflow fails', 'n8n-nodes-base.errorTrigger', 1, [0, 300], {}),
-    node('Notify team (Slack)', 'n8n-nodes-base.slack', 2.2, [240, 300], {
+    settings([['alert_channel', '#sales']], [220, 300]),
+    node('Notify team (Slack)', 'n8n-nodes-base.slack', 2.2, [440, 300], {
       select: 'channel',
-      channelId: { __rl: true, mode: 'name', value: '#sales' },
+      channelId: { __rl: true, mode: 'name', value: "={{ $('Settings').first().json.alert_channel }}" },
       // failures in a trigger arrive under "trigger" instead of "execution"
       text: "={{ $json.execution ? '⚠️ Workflow *' + $json.workflow.name + '* failed at node *' + $json.execution.lastNodeExecuted + '*: ' + $json.execution.error.message + '\\n' + ($json.execution.url || '') : '⚠️ Workflow *' + $json.workflow.name + '* could not start: ' + $json.trigger.error.message }}",
       otherOptions: {},
     }, { credentials: cred('slackApi', 'Slack account') }),
   ],
-  connections: connect([['When a workflow fails', 'Notify team (Slack)']]),
+  connections: connect([['When a workflow fails', 'Settings'], ['Settings', 'Notify team (Slack)']]),
   settings: { executionOrder: 'v1' },
   pinData: {}, active: false, id: 'LeadErrorAlert01', tags: [],
 };

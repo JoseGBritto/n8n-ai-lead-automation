@@ -84,3 +84,18 @@ test('follow-ups: Pick due follow-ups + Prepare CRM update nodes', () => {
   assert.deepEqual(Object.keys(update), ['id', 'followups', 'last_contact']);
   assert.equal(update.followups, 1);
 });
+
+test('intake: the visitor is answered before the slow steps, and bots get a silent 200', () => {
+  const targets = (from, output) => (intake.connections[from].main[output] || []).map((c) => c.node);
+  assert.deepEqual(targets('Valid?', 0), ['Respond: thanks', 'AI qualification']);
+  assert.deepEqual(targets('Valid?', 1), ['Bot (honeypot)?']);
+  assert.deepEqual(targets('Bot (honeypot)?', 0), ['Respond: thanks']);
+  assert.deepEqual(targets('Bot (honeypot)?', 1), ['Respond: invalid']);
+  const sheets = intake.nodes.find((n) => n.name === 'Save to CRM (Google Sheets)');
+  assert.equal(sheets.parameters.options.cellFormat, 'RAW');
+  assert.ok(!targets('Save to CRM (Google Sheets)', 0).includes('Respond: thanks'));
+});
+
+test('every workflow starts with an editable Settings node', () => {
+  for (const wf of [intake, follow, errorWf]) assert.ok(wf.nodes.some((n) => n.name === 'Settings'), wf.name);
+});

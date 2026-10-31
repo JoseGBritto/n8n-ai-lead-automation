@@ -1,1 +1,1 @@
-id,created_at,name,email,phone,company,website,source,message,score,tier,intent,budget_usd,urgency,service,summary,reply,qualified_by,status,followups,last_contact
+id,created_at,name,email,phone,company,website,source,lang,message,score,tier,intent,budget_usd,urgency,service,summary,reply,qualified_by,status,followups,last_contact
